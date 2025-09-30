@@ -14,7 +14,6 @@ import threading
 from money import *
 from cse351 import *
 
-# ---------------------------------------------------------------------------
 def main(): 
 
     print('\nATM Processing Program:')
@@ -31,32 +30,84 @@ def main():
 
     bank = Bank()
 
-    # TODO - Add a ATM_Reader for each data file
+    threads = []
+    for data_file in data_files:
+        t = ATM_Reader(data_file, bank)
+        threads.append(t)
+        t.start()
+    
+    for t in threads:
+        t.join()
 
     test_balances(bank)
 
     log.stop_timer('Total time')
 
 
-# ===========================================================================
-class ATM_Reader():
-    # TODO - implement this class here
-    ...
+class ATM_Reader(threading.Thread):
+    def __init__(self, filename, bank):
+        threading.Thread.__init__(self)
+        self.filename = filename
+        self.bank = bank
+    
+    def run(self):
+        f = open(self.filename, 'r')
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.split(',')
+            if len(parts) == 3:
+                account = int(parts[0])
+                if parts[1] == 'd':
+                    self.bank.deposit(account, Money(parts[2]))
+                elif parts[1] == 'w':
+                    self.bank.withdraw(account, Money(parts[2]))
+        f.close()
 
 
-# ===========================================================================
 class Account():
-    # TODO - implement this class here
-    ...
+    def __init__(self):
+        self.balance = Money('0.00')
+    
+    def deposit(self, amount):
+        self.balance.add(amount)
+    
+    def withdraw(self, amount):
+        self.balance.sub(amount)
+    
+    def get_balance(self):
+        return self.balance
 
 
-# ===========================================================================
 class Bank():
-    # TODO - implement this class here
-    ...
+    def __init__(self):
+        self.accounts = {}
+        self.lock = threading.Lock()
+    
+    def deposit(self, account, amount):
+        self.lock.acquire()
+        if account not in self.accounts:
+            self.accounts[account] = Account()
+        self.accounts[account].deposit(amount)
+        self.lock.release()
+    
+    def withdraw(self, account, amount):
+        self.lock.acquire()
+        if account not in self.accounts:
+            self.accounts[account] = Account()
+        self.accounts[account].withdraw(amount)
+        self.lock.release()
+    
+    def get_balance(self, account):
+        self.lock.acquire()
+        if account not in self.accounts:
+            result = Money('0.00')
+        else:
+            result = self.accounts[account].get_balance()
+        self.lock.release()
+        return result
 
 
-# ---------------------------------------------------------------------------
 
 def get_filenames(folder):
     """ Don't Change """
@@ -66,7 +117,6 @@ def get_filenames(folder):
             filenames.append(os.path.join(folder, filename))
     return filenames
 
-# ---------------------------------------------------------------------------
 def create_data_files_if_needed():
     """ Don't Change """
     ATMS = 10
@@ -100,7 +150,6 @@ def create_data_files_if_needed():
 
     print()
 
-# ---------------------------------------------------------------------------
 def test_balances(bank):
     """ Don't Change """
 
