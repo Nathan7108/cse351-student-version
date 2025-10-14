@@ -18,33 +18,83 @@ recno: record number starting from 0
 """
 
 import time
+import threading
+import queue
+import requests
 from common import *
 
 from cse351 import *
 
-THREADS = 0                 # TODO - set for your program
+THREADS = 120
 WORKERS = 10
-RECORDS_TO_RETRIEVE = 5000  # Don't change
+RECORDS_TO_RETRIEVE = 5000
+COMMAND_BATCH = 1000
 
 
 # ---------------------------------------------------------------------------
-def retrieve_weather_data():
-    # TODO - fill out this thread function (and arguments)
-    ...
+def retrieve_weather_data(cmd_q, data_q, noaa):
+    session = requests.Session()
+
+    while True:
+        commands = []
+        try:
+            for _ in range(COMMAND_BATCH):
+                cmd = cmd_q.get_nowait()
+                if cmd is None:
+                    return
+                commands.append(cmd)
+        except:
+            pass
+
+        if not commands:
+            try:
+                cmd = cmd_q.get(timeout=1)
+                if cmd is None:
+                    return
+                commands.append(cmd)
+            except:
+                continue
+
+        for city, recno in commands:
+            url = f"{TOP_API_URL}/record/{city}/{recno}"
+            try:
+                resp = session.get(url, timeout=10)
+                resp.raise_for_status()
+                item = resp.json()
+                if item and 'temp' in item:
+                    with noaa.city_locks[city]:
+                        noaa.temps[city].append(item['temp'])
+            except:
+                response = get_data_from_server(url)
+                if response and 'temp' in response:
+                    with noaa.city_locks[city]:
+                        noaa.temps[city].append(response['temp'])
 
 
 # ---------------------------------------------------------------------------
-# TODO - Create Worker threaded class
+class Worker(threading.Thread):
+
+    def __init__(self, noaa):
+        threading.Thread.__init__(self)
+        self.noaa = noaa
+
+    def run(self):
+        pass
 
 
 # ---------------------------------------------------------------------------
-# TODO - Complete this class
 class NOAA:
 
     def __init__(self):
-        ...
+        self.temps = {city: [] for city in CITIES}
+        self.city_locks = {city: threading.Lock() for city in CITIES}
+        self.read_lock = threading.Lock()
 
     def get_temp_details(self, city):
+        with self.read_lock:
+            values = self.temps[city]
+            if values:
+                return sum(values) / len(values)
         return 0.0
 
 
@@ -87,10 +137,8 @@ def main():
 
     noaa = NOAA()
 
-    # Start server
     data = get_data_from_server(f'{TOP_API_URL}/start')
 
-    # Get all cities number of records
     print('Retrieving city details')
     city_details = {}
     name = 'City'
@@ -103,12 +151,33 @@ def main():
 
     records = RECORDS_TO_RETRIEVE
 
-    # TODO - Create any queues, pipes, locks, barriers you need
+    cmd_q = queue.Queue(maxsize=10)
 
+    retrievers = []
+    for _ in range(THREADS):
+        t = threading.Thread(target=retrieve_weather_data, args=(cmd_q, None, noaa))
+        t.start()
+        retrievers.append(t)
 
+    workers = []
+    for _ in range(WORKERS):
+        w = Worker(noaa)
+        w.start()
+        workers.append(w)
 
+    for city in CITIES:
+        for rec in range(records):
+            cmd_q.put((city, rec))
 
-    # End server - don't change below
+    for _ in range(THREADS):
+        cmd_q.put(None)
+
+    for t in retrievers:
+        t.join()
+
+    for w in workers:
+        w.join()
+
     data = get_data_from_server(f'{TOP_API_URL}/end')
     print(data)
 
@@ -119,4 +188,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
